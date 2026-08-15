@@ -1,27 +1,36 @@
-#include "Log.h"
+#include "../include/Log.h"
 
-#include <chrono>
+#include <sys/time.h>
+
 #include <cstdarg>
 #include <cstring>
 #include <ctime>
 
 namespace {
 
-// 生成当前时间的格式化字符串，格式：YYYY-MM-DD HH:MM:SS.mmm
-std::string GetCurrentTime() {
-    const auto now = std::chrono::system_clock::now();
-    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                        now.time_since_epoch()) %
-                    1000;
-    const std::time_t now_time = std::chrono::system_clock::to_time_t(now);
-    std::tm tm_buf;
-    localtime_r(&now_time, &tm_buf);
-    char buf[64];
-    snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d.%03d",
-             tm_buf.tm_year + 1900, tm_buf.tm_mon + 1, tm_buf.tm_mday,
-             tm_buf.tm_hour, tm_buf.tm_min, tm_buf.tm_sec,
-             static_cast<int>(ms.count()));
-    return buf;
+// 将日志级别枚举转换为 TinyWebServer 风格的级别前缀字符串
+const char* LevelToString(Log::LogLevel level) {
+    switch (level) {
+        case Log::LogLevel::kDebug:
+            return "[debug]:";
+        case Log::LogLevel::kInfo:
+            return "[info]:";
+        case Log::LogLevel::kWarn:
+            return "[warn]:";
+        case Log::LogLevel::kError:
+            return "[erro]:";
+        default:
+            return "[info]:";
+    }
+}
+
+// 生成日期前缀字符串，格式：YYYY_MM_DD_
+std::string BuildDatePrefix(const std::tm& tm_now) {
+    char date[32];
+    std::snprintf(date, sizeof(date), "%d_%02d_%02d_",
+                  tm_now.tm_year + 1900, tm_now.tm_mon + 1,
+                  tm_now.tm_mday);
+    return date;
 }
 
 }  // namespace
@@ -33,172 +42,157 @@ Log& Log::GetInstance() {
 }
 
 Log::Log()
-    : level_(LogLevel::kDebug),
-      target_(OutputTarget::kConsole),
-      max_file_size_(0),
-      current_file_size_(0),
+    : close_log_(0),
+      log_buf_size_(0),
+      split_lines_(0),
+      max_queue_size_(0),
+      log_count_(0),
+      today_(0),
       file_(nullptr),
+      buf_(nullptr),
       async_enabled_(false),
       stop_flag_(false),
       idle_(true) {}
 
 Log::~Log() {
-    Shutdown();
+    Reset();
 }
 
-void Log::Init(OutputTarget target, const std::string& file_path,
-               std::size_t max_file_size, bool async_enabled) {
-    std::lock_guard<std::mutex> lock(file_mutex_);
-    // 若已有打开的文件，先关闭
-    if (file_ != nullptr) {
-        std::fclose(file_);
-        file_ = nullptr;
-    }
-    target_ = target;
-    file_path_ = file_path;
-    max_file_size_ = max_file_size;
-    current_file_size_ = 0;
+bool Log::Init(const char* file_name, int close_log, int log_buf_size,
+               int split_lines, int max_queue_size) {
+    // 若已初始化过，先释放旧资源
+    Reset();
 
-    if (target_ == OutputTarget::kFile || target_ == OutputTarget::kBoth) {
-        file_ = std::fopen(file_path_.c_str(), "a");
-        if (file_ != nullptr) {
-            // 追加模式下定位文件末尾，统计已写入的字节数用于轮转判断
-            std::fseek(file_, 0, SEEK_END);
-            current_file_size_ = static_cast<std::size_t>(std::ftell(file_));
-        }
+    close_log_ = close_log;
+    log_buf_size_ = log_buf_size;
+    split_lines_ = split_lines;
+    max_queue_size_ = max_queue_size;
+    buf_ = new char[log_buf_size_];
+
+    // 解析目录与文件名
+    const char* slash = std::strrchr(file_name, '/');
+    if (slash == nullptr) {
+        dir_name_.clear();
+        log_name_ = file_name;
+    } else {
+        dir_name_.assign(file_name, slash - file_name + 1);
+        log_name_ = slash + 1;
     }
 
-    async_enabled_ = async_enabled;
-    if (async_enabled_ && !async_thread_.joinable()) {
+    // 按天生成完整文件名：目录/YYYY_MM_DD_文件名
+    std::time_t t = std::time(nullptr);
+    std::tm tm_now;
+    localtime_r(&t, &tm_now);
+    today_ = tm_now.tm_mday;
+    log_full_name_ = dir_name_ + BuildDatePrefix(tm_now) + log_name_;
+
+    file_ = std::fopen(log_full_name_.c_str(), "a");
+    if (file_ == nullptr) {
+        return false;
+    }
+
+    // max_queue_size >= 1 时启用异步写入（后台线程消费有界队列）
+    if (max_queue_size_ >= 1) {
+        async_enabled_ = true;
         stop_flag_ = false;
         idle_ = true;
         async_thread_ = std::thread(&Log::AsyncLoop, this);
     }
+    return true;
 }
 
-void Log::SetLevel(LogLevel level) {
-    level_ = level;
-}
-
-Log::LogLevel Log::GetLevel() const {
-    return level_;
-}
-
-void Log::SetAsyncEnabled(bool async_enabled) {
-    if (async_enabled == async_enabled_.load()) {
+void Log::WriteLog(LogLevel level, const char* format, ...) {
+    // 关闭日志时直接丢弃
+    if (close_log_) {
         return;
     }
-    if (async_enabled) {
-        std::lock_guard<std::mutex> lock(queue_mutex_);
-        async_enabled_ = true;
-        if (!async_thread_.joinable()) {
-            stop_flag_ = false;
-            idle_ = true;
-            async_thread_ = std::thread(&Log::AsyncLoop, this);
+
+    // 获取当前时间（localtime_r 线程安全，避免并发覆盖共享 tm）
+    struct timeval now;
+    gettimeofday(&now, nullptr);
+    std::tm tm_now;
+    localtime_r(&now.tv_sec, &tm_now);
+
+    // 行数统计、按天/行数分割与格式化（均受 file_mutex_ 保护，
+    // 防止多线程并发写入共享 buf_ 导致内容相互覆盖）
+    std::string line;
+    {
+        std::lock_guard<std::mutex> lock(file_mutex_);
+        ++log_count_;
+        if (today_ != tm_now.tm_mday || log_count_ % split_lines_ == 0) {
+            if (file_ != nullptr) {
+                std::fflush(file_);
+                std::fclose(file_);
+            }
+            const std::string date_prefix = BuildDatePrefix(tm_now);
+            std::string new_name;
+            if (today_ != tm_now.tm_mday) {
+                // 跨天：切换到新日期文件
+                new_name = dir_name_ + date_prefix + log_name_;
+                today_ = tm_now.tm_mday;
+                log_count_ = 0;
+            } else {
+                // 行数超限：切换到带序号的新文件继续写
+                new_name = dir_name_ + date_prefix + log_name_ + "." +
+                           std::to_string(log_count_ / split_lines_);
+            }
+            file_ = std::fopen(new_name.c_str(), "a");
         }
-    } else {
-        // 关闭异步：通知后台线程退出并等待其消费完剩余日志
+
+        // 格式化日志行：时间戳 + 级别 + 内容
+        va_list args;
+        va_start(args, format);
+        const int n = std::snprintf(buf_, 48, "%d-%02d-%02d %02d:%02d:%02d.%06ld %s ",
+                                    tm_now.tm_year + 1900, tm_now.tm_mon + 1,
+                                    tm_now.tm_mday, tm_now.tm_hour, tm_now.tm_min,
+                                    tm_now.tm_sec, now.tv_usec,
+                                    LevelToString(level));
+        int m = std::vsnprintf(buf_ + n, log_buf_size_ - n - 1, format, args);
+        va_end(args);
+        // 防止超长内容越界
+        if (m < 0) {
+            m = 0;
+        }
+        if (n + m >= log_buf_size_ - 1) {
+            m = log_buf_size_ - n - 2;
+        }
+        buf_[n + m] = '\n';
+        buf_[n + m + 1] = '\0';
+        line.assign(buf_);
+    }
+
+    // 异步且队列未满：入队交给后台线程；否则同步写入文件
+    if (async_enabled_) {
         std::unique_lock<std::mutex> lock(queue_mutex_);
-        async_enabled_ = false;
-        if (async_thread_.joinable()) {
-            stop_flag_ = true;
-            queue_cv_.notify_all();
-            lock.unlock();
-            async_thread_.join();
-            lock.lock();
-            stop_flag_ = false;
-            idle_ = true;
-        }
-    }
-}
-
-bool Log::IsAsyncEnabled() const {
-    return async_enabled_.load();
-}
-
-void Log::Write(LogLevel level, const std::string& module, const char* fmt, ...) {
-    // 级别过滤：低于当前设置级别的日志直接丢弃
-    if (level < level_) {
-        return;
-    }
-
-    // 格式化用户消息
-    va_list args;
-    va_start(args, fmt);
-    char message[kMaxMessageSize];
-    vsnprintf(message, sizeof(message), fmt, args);
-    va_end(args);
-
-    // 组装标准化日志行：时间戳 | 级别 | 模块 | 内容
-    std::string line = "[" + GetCurrentTime() + "][" +
-                       LevelToString(level) + "][" + module + "] " +
-                       message + "\n";
-
-    // 异步模式下入队由后台线程消费；FATAL 强制同步写入确保不丢失
-    if (async_enabled_.load() && level != LogLevel::kFatal) {
-        {
-            std::lock_guard<std::mutex> lock(queue_mutex_);
+        if (async_queue_.size() <
+            static_cast<std::size_t>(max_queue_size_)) {
             async_queue_.push_back(std::move(line));
+            queue_cv_.notify_one();
+            return;
         }
-        queue_cv_.notify_one();
-    } else {
-        WriteLine(line);
+        // 队列满：降级为同步写入，保证日志不丢失
+        lock.unlock();
+    }
+    {
+        std::lock_guard<std::mutex> lock(file_mutex_);
+        if (file_ != nullptr) {
+            std::fputs(line.c_str(), file_);
+        }
     }
 }
 
-void Log::WriteLine(const std::string& line) {
-    if (target_ == OutputTarget::kConsole || target_ == OutputTarget::kBoth) {
-        std::lock_guard<std::mutex> lock(console_mutex_);
-        std::fwrite(line.data(), 1, line.size(), stdout);
-        std::fflush(stdout);
+void Log::Flush() {
+    // 异步模式：等待后台线程消费完队列中所有日志
+    if (async_enabled_) {
+        std::unique_lock<std::mutex> lock(queue_mutex_);
+        idle_cv_.wait(lock, [this] {
+            return async_queue_.empty() && idle_;
+        });
     }
-    if (target_ == OutputTarget::kFile || target_ == OutputTarget::kBoth) {
-        WriteToFile(line);
-    }
-}
-
-void Log::WriteToFile(const std::string& line) {
     std::lock_guard<std::mutex> lock(file_mutex_);
-    if (file_ == nullptr) {
-        return;
-    }
-    RotateIfNeeded(line.size());
-    std::fwrite(line.data(), 1, line.size(), file_);
-    current_file_size_ += line.size();
-}
-
-void Log::RotateIfNeeded(std::size_t message_size) {
-    // max_file_size_ 为 0 表示不轮转
-    if (max_file_size_ == 0 ||
-        current_file_size_ + message_size <= max_file_size_) {
-        return;
-    }
     if (file_ != nullptr) {
-        std::fclose(file_);
-        file_ = nullptr;
+        std::fflush(file_);
     }
-    // 查找当前已存在的最大的轮转序号
-    int max_index = 0;
-    while (true) {
-        const std::string old_path =
-            file_path_ + "." + std::to_string(max_index + 1);
-        std::FILE* probe = std::fopen(old_path.c_str(), "r");
-        if (probe == nullptr) {
-            break;
-        }
-        std::fclose(probe);
-        ++max_index;
-    }
-    // 从大到小依次后移，为新的轮转文件腾出 .1 位置
-    for (int i = max_index; i >= 1; --i) {
-        const std::string from = file_path_ + "." + std::to_string(i);
-        const std::string to = file_path_ + "." + std::to_string(i + 1);
-        std::rename(from.c_str(), to.c_str());
-    }
-    std::rename(file_path_.c_str(), (file_path_ + ".1").c_str());
-    // 重新打开当前日志文件
-    file_ = std::fopen(file_path_.c_str(), "a");
-    current_file_size_ = 0;
 }
 
 void Log::AsyncLoop() {
@@ -217,7 +211,12 @@ void Log::AsyncLoop() {
             idle_ = false;
         }
         // 在锁外执行实际写入，避免长时间占用队列锁
-        WriteLine(line);
+        {
+            std::lock_guard<std::mutex> lock(file_mutex_);
+            if (file_ != nullptr) {
+                std::fputs(line.c_str(), file_);
+            }
+        }
         {
             std::lock_guard<std::mutex> lock(queue_mutex_);
             if (async_queue_.empty()) {
@@ -228,56 +227,26 @@ void Log::AsyncLoop() {
     }
 }
 
-void Log::Flush() {
-    if (async_enabled_.load()) {
-        // 异步模式：等待后台线程消费完队列中所有日志
-        std::unique_lock<std::mutex> lock(queue_mutex_);
-        idle_cv_.wait(lock, [this] {
-            return async_queue_.empty() && idle_;
-        });
+void Log::Reset() {
+    // 停止并回收后台线程（退出前会消费完队列中剩余日志）
+    if (async_thread_.joinable()) {
+        {
+            std::lock_guard<std::mutex> lock(queue_mutex_);
+            stop_flag_ = true;
+        }
+        queue_cv_.notify_all();
+        async_thread_.join();
+        stop_flag_ = false;
     }
-    std::lock_guard<std::mutex> lock(file_mutex_);
+    // 关闭日志文件并释放缓冲
     if (file_ != nullptr) {
         std::fflush(file_);
+        std::fclose(file_);
+        file_ = nullptr;
     }
-    std::fflush(stdout);
-}
-
-void Log::Shutdown() {
-    if (stop_flag_) {
-        return;
-    }
-    {
-        std::lock_guard<std::mutex> lock(queue_mutex_);
-        stop_flag_ = true;
-    }
-    queue_cv_.notify_all();
-    if (async_thread_.joinable()) {
-        async_thread_.join();
-    }
-    Flush();
-    {
-        std::lock_guard<std::mutex> lock(file_mutex_);
-        if (file_ != nullptr) {
-            std::fclose(file_);
-            file_ = nullptr;
-        }
-    }
-}
-
-const char* Log::LevelToString(LogLevel level) {
-    switch (level) {
-        case LogLevel::kDebug:
-            return "DEBUG";
-        case LogLevel::kInfo:
-            return "INFO";
-        case LogLevel::kWarn:
-            return "WARN";
-        case LogLevel::kError:
-            return "ERROR";
-        case LogLevel::kFatal:
-            return "FATAL";
-        default:
-            return "UNKNOWN";
-    }
+    delete[] buf_;
+    buf_ = nullptr;
+    log_count_ = 0;
+    today_ = 0;
+    async_enabled_ = false;
 }
