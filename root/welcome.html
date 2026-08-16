@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>欢迎 - MyWebServer</title>
+<style>
+  body { font-family: sans-serif; background: #f0f2f5; margin: 0; }
+  .bar { padding: 14px 24px; background: #4a90d9; color: #fff; display: flex;
+         justify-content: space-between; align-items: center; }
+  .bar a { color: #fff; text-decoration: none; }
+  .panel { text-align: center; padding: 24px; }
+  button { margin: 8px 12px; padding: 10px 24px; border: none; border-radius: 4px;
+           background: #4a90d9; color: #fff; cursor: pointer; }
+  button:hover { background: #3a7bc8; }
+</style>
+</head>
+<body>
+<div class="bar">
+  <span>欢迎回来，MyWebServer</span>
+  <a href="index.html">退出登录</a>
+</div>
+<div class="panel">
+  <!-- 资源请求：点击按钮跳转到对应资源链接，由浏览器直接展示/播放 -->
+  <button onclick="showImage()">请求图片</button>
+  <button onclick="showVideo()">请求视频</button>
+</div>
+<script>
+// 请求图片：跳转到图片链接，由浏览器直接展示
+function showImage() {
+  window.location.href = 'picture.jpg';
+}
+// 请求视频：跳转到视频链接，由浏览器直接播放
+function showVideo() {
+  window.location.href = 'video.mp4';
+}
+</script>
+</body>
+</html>

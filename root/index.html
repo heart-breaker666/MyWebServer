@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>登录 - MyWebServer</title>
+<style>
+  body { font-family: sans-serif; background: #f0f2f5; }
+  .card { width: 320px; margin: 80px auto; padding: 30px;
+          background: #fff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,.15); }
+  h2 { text-align: center; color: #333; }
+  input { width: 100%; padding: 10px; margin: 8px 0; box-sizing: border-box;
+          border: 1px solid #ccc; border-radius: 4px; }
+  button { width: 100%; padding: 10px; margin-top: 8px; background: #4a90d9;
+           color: #fff; border: none; border-radius: 4px; cursor: pointer; }
+  button:hover { background: #3a7bc8; }
+  .msg { color: #d9534f; text-align: center; margin-top: 8px; min-height: 18px; }
+  .link { text-align: center; margin-top: 14px; }
+  .link a { color: #4a90d9; text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h2>登录</h2>
+  <!-- 登录表单：提交到 /2 校验；成功跳转资源请求页，失败显示错误 -->
+  <form method="POST" action="/2" id="login-form">
+    <input type="text" name="user" placeholder="用户名" required>
+    <input type="password" name="passwd" placeholder="密码" required>
+    <button type="submit">登录</button>
+  </form>
+  <p class="msg" id="msg"></p>
+  <div class="link"><a href="register.html">没有账号？去注册</a></div>
+</div>
+<script>
+// 使用 fetch 提交登录，避免整页刷新；服务器返回 2xx 视为成功
+document.getElementById('login-form').addEventListener('submit', function (e) {
+  e.preventDefault();
+  var msg = document.getElementById('msg');
+  msg.textContent = '';
+  fetch('/2', { method: 'POST', body: new FormData(this) })
+    .then(function (res) {
+      if (res.ok) {
+        window.location.href = 'welcome.html';  // 登录成功，进入资源请求页
+      } else {
+        msg.textContent = '用户名或密码错误';
+      }
+    })
+    .catch(function () {
+      msg.textContent = '无法连接服务器，请稍后重试';
+    });
+});
+</script>
+</body>
+</html>

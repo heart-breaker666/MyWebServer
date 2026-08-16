@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>注册 - MyWebServer</title>
+<style>
+  body { font-family: sans-serif; background: #f0f2f5; }
+  .card { width: 320px; margin: 80px auto; padding: 30px;
+          background: #fff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,.15); }
+  h2 { text-align: center; color: #333; }
+  input { width: 100%; padding: 10px; margin: 8px 0; box-sizing: border-box;
+          border: 1px solid #ccc; border-radius: 4px; }
+  button { width: 100%; padding: 10px; margin-top: 8px; background: #5cb85c;
+           color: #fff; border: none; border-radius: 4px; cursor: pointer; }
+  button:hover { background: #4cae4c; }
+  .msg { color: #d9534f; text-align: center; margin-top: 8px; min-height: 18px; }
+  .link { text-align: center; margin-top: 14px; }
+  .link a { color: #5cb85c; text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h2>注册</h2>
+  <!-- 注册表单：提交到 /3 写入用户；成功跳转登录页重新登录，失败显示错误 -->
+  <form method="POST" action="/3" id="register-form">
+    <input type="text" name="user" placeholder="用户名" required>
+    <input type="password" name="passwd" placeholder="密码" required>
+    <button type="submit">注册</button>
+  </form>
+  <p class="msg" id="msg"></p>
+  <div class="link"><a href="index.html">已有账号？去登录</a></div>
+</div>
+<script>
+// 使用 fetch 提交注册，避免整页刷新；服务器返回 2xx 视为成功
+document.getElementById('register-form').addEventListener('submit', function (e) {
+  e.preventDefault();
+  var msg = document.getElementById('msg');
+  msg.textContent = '';
+  fetch('/3', { method: 'POST', body: new FormData(this) })
+    .then(function (res) {
+      if (res.ok) {
+        window.location.href = 'index.html';  // 注册成功，返回登录页重新登录
+      } else {
+        msg.textContent = '注册失败，用户名可能已存在';
+      }
+    })
+    .catch(function () {
+      msg.textContent = '无法连接服务器，请稍后重试';
+    });
+});
+</script>
+</body>
+</html>
