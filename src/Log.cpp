@@ -102,8 +102,8 @@ bool Log::Init(const char* file_name, int close_log, int log_buf_size,
 }
 
 void Log::WriteLog(LogLevel level, const char* format, ...) {
-    // 关闭日志时直接丢弃
-    if (close_log_) {
+    // 关闭日志或尚未初始化时直接丢弃
+    if (close_log_ || buf_ == nullptr) {
         return;
     }
 
@@ -177,6 +177,8 @@ void Log::WriteLog(LogLevel level, const char* format, ...) {
         std::lock_guard<std::mutex> lock(file_mutex_);
         if (file_ != nullptr) {
             std::fputs(line.c_str(), file_);
+            // 同步写入后立即落盘，保证日志实时可见（对齐 TinyWebServer 宏 flush 行为）
+            std::fflush(file_);
         }
     }
 }
@@ -215,6 +217,8 @@ void Log::AsyncLoop() {
             std::lock_guard<std::mutex> lock(file_mutex_);
             if (file_ != nullptr) {
                 std::fputs(line.c_str(), file_);
+                // 后台线程消费后立即落盘，保证日志实时可见
+                std::fflush(file_);
             }
         }
         {

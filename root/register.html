@@ -32,11 +32,14 @@
 </div>
 <script>
 // 使用 fetch 提交注册，避免整页刷新；服务器返回 2xx 视为成功
+// 注意：用 URLSearchParams 编码（x-www-form-urlencoded），
+//       FormData 会生成 multipart 格式，服务器暂不支持
 document.getElementById('register-form').addEventListener('submit', function (e) {
   e.preventDefault();
   var msg = document.getElementById('msg');
   msg.textContent = '';
-  fetch('/3', { method: 'POST', body: new FormData(this) })
+  var params = new URLSearchParams(new FormData(this));
+  fetch('/3', { method: 'POST', body: params })
     .then(function (res) {
       if (res.ok) {
         window.location.href = 'index.html';  // 注册成功，返回登录页重新登录

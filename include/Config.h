@@ -1,21 +1,9 @@
 #pragma once
 
-// 服务器配置模块（轻量版）。
-// 参考 TinyWebServer 的 config 设计：通过命令行参数（getopt 短选项）配置运行参数，
-// 不依赖配置文件与环境变量。所有参数均有内置默认值，构造函数初始化。
 class Config {
 public:
     Config();
     ~Config() = default;
-
-    // 解析命令行参数。支持选项：
-    //   -p <port>   监听端口号（默认 9006）
-    //   -l <0|1>    日志写入方式：0 同步 / 1 异步（默认 0 同步）
-    //   -m <0-3>    触发组合模式：0=LT+LT 1=LT+ET 2=ET+LT 3=ET+ET（默认 0）
-    //   -s <num>    数据库连接池数量（默认 8）
-    //   -t <num>    线程池线程数量（默认 8）
-    //   -c <0|1>    是否关闭日志：0 否 / 1 是（默认 0）
-    //   -a <0|1>    并发模型：0 proactor / 1 reactor（默认 0）
     void ParseArg(int argc, char* argv[]);
 
     // 监听端口号
