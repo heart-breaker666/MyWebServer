@@ -21,19 +21,23 @@ POOL_TEST_SRCS = src/ConnectionPool.cpp src/Log.cpp test/ConnectionPoolTest.cpp
 
 # HTTP 连接处理单元测试（socketpair 模拟连接，验证状态机）
 HTTP_TEST = http_test
-HTTP_TEST_SRCS = src/HttpConn.cpp src/Log.cpp src/ConnectionPool.cpp test/HttpConnTest.cpp
+HTTP_TEST_SRCS = src/HttpConn.cpp src/Log.cpp src/ConnectionPool.cpp src/TimerManager.cpp test/HttpConnTest.cpp
 
 # 线程池单元测试（FIFO/并发/HttpConn 任务/状态管理）
 THREADPOOL_TEST = threadpool_test
-THREADPOOL_TEST_SRCS = src/HttpConn.cpp src/Log.cpp src/ConnectionPool.cpp test/ThreadPoolTest.cpp
+THREADPOOL_TEST_SRCS = src/HttpConn.cpp src/Log.cpp src/ConnectionPool.cpp src/TimerManager.cpp test/ThreadPoolTest.cpp
 
-# 主程序：Web 服务器（串联 Config/Log/ConnectionPool/WebServer/HttpConn）
+# 定时器管理单元测试（注册/顺延/删除/到期 Tick）
+TIMER_TEST = timer_test
+TIMER_TEST_SRCS = src/TimerManager.cpp test/TimerManagerTest.cpp
+
+# 主程序：Web 服务器（串联 Config/Log/ConnectionPool/WebServer/HttpConn/ThreadPool/Timer）
 SERVER = server
-SERVER_SRCS = src/main.cpp src/Config.cpp src/Log.cpp src/ConnectionPool.cpp src/HttpConn.cpp src/WebServer.cpp
+SERVER_SRCS = src/main.cpp src/Config.cpp src/Log.cpp src/ConnectionPool.cpp src/HttpConn.cpp src/WebServer.cpp src/TimerManager.cpp
 
 .PHONY: all test stress clean
 
-all: $(LOG_TEST) $(CONFIG_TEST) $(STRESS_TEST) $(POOL_TEST) $(HTTP_TEST) $(THREADPOOL_TEST) $(SERVER)
+all: $(LOG_TEST) $(CONFIG_TEST) $(STRESS_TEST) $(POOL_TEST) $(HTTP_TEST) $(THREADPOOL_TEST) $(TIMER_TEST) $(SERVER)
 
 $(LOG_TEST): $(LOG_TEST_SRCS) include/Log.h
 	$(CXX) $(CXXFLAGS) -o $@ $(LOG_TEST_SRCS) $(LDFLAGS)
@@ -50,22 +54,26 @@ $(POOL_TEST): $(POOL_TEST_SRCS) include/ConnectionPool.h include/Log.h
 $(HTTP_TEST): $(HTTP_TEST_SRCS) include/HttpConn.h include/Log.h include/ConnectionPool.h
 	$(CXX) $(CXXFLAGS) -o $@ $(HTTP_TEST_SRCS) $(LDFLAGS) -lmysqlclient
 
-$(THREADPOOL_TEST): $(THREADPOOL_TEST_SRCS) include/ThreadPool.h include/HttpConn.h include/Log.h include/ConnectionPool.h
+$(THREADPOOL_TEST): $(THREADPOOL_TEST_SRCS) include/ThreadPool.h include/HttpConn.h include/Log.h include/ConnectionPool.h include/TimerManager.h
 	$(CXX) $(CXXFLAGS) -o $@ $(THREADPOOL_TEST_SRCS) $(LDFLAGS) -lmysqlclient
 
-$(SERVER): $(SERVER_SRCS) include/WebServer.h include/Config.h include/Log.h include/ConnectionPool.h include/HttpConn.h include/ThreadPool.h
+$(TIMER_TEST): $(TIMER_TEST_SRCS) include/TimerManager.h
+	$(CXX) $(CXXFLAGS) -o $@ $(TIMER_TEST_SRCS) $(LDFLAGS)
+
+$(SERVER): $(SERVER_SRCS) include/WebServer.h include/Config.h include/Log.h include/ConnectionPool.h include/HttpConn.h include/ThreadPool.h include/TimerManager.h
 	$(CXX) $(CXXFLAGS) -o $@ $(SERVER_SRCS) $(LDFLAGS) -lmysqlclient
 
-test: $(LOG_TEST) $(CONFIG_TEST) $(POOL_TEST) $(HTTP_TEST) $(THREADPOOL_TEST)
+test: $(LOG_TEST) $(CONFIG_TEST) $(POOL_TEST) $(HTTP_TEST) $(THREADPOOL_TEST) $(TIMER_TEST)
 	./$(LOG_TEST)
 	./$(CONFIG_TEST)
 	./$(POOL_TEST)
 	./$(HTTP_TEST)
 	./$(THREADPOOL_TEST)
+	./$(TIMER_TEST)
 
 stress: $(STRESS_TEST)
 	./$(STRESS_TEST)
 
 clean:
-	rm -f $(LOG_TEST) $(CONFIG_TEST) $(STRESS_TEST) $(POOL_TEST) $(HTTP_TEST) $(THREADPOOL_TEST) $(SERVER) *.log *.log.* *.conf
+	rm -f $(LOG_TEST) $(CONFIG_TEST) $(STRESS_TEST) $(POOL_TEST) $(HTTP_TEST) $(THREADPOOL_TEST) $(TIMER_TEST) $(SERVER) *.log *.log.* *.conf
 

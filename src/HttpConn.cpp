@@ -15,6 +15,7 @@
 #include <mutex>
 
 #include "../include/Log.h"
+#include "../include/TimerManager.h"
 
 namespace {
 
@@ -478,11 +479,15 @@ void HttpConn::ContinueRead() {
 
 void HttpConn::Close() {
     if (sockfd_ > 0) {
-        epoll_ctl(epoll_fd_, EPOLL_CTL_DEL, sockfd_, nullptr);
-        close(sockfd_);
+        const int fd = sockfd_;
+        epoll_ctl(epoll_fd_, EPOLL_CTL_DEL, fd, nullptr);
+        close(fd);
         sockfd_ = -1;
         --user_count_;
         Unmap();
+        // 删除该连接的定时器：无论连接由主线程还是工作线程关闭，
+        // 定时器都被清理，防止 fd 重用后旧定时器误关新连接
+        TimerManager::GetInstance().DeleteTimer(fd);
     }
 }
 

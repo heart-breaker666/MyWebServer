@@ -18,6 +18,8 @@ namespace {
 const int kMaxFd = 65536;
 // 每次 epoll_wait 最多返回的事件数
 const int kMaxEvents = 1024;
+// 连接超时时间（秒）：客户端连接后无任何活动则被关闭（对齐 TinyWebServer 3*TIMESLOT）
+constexpr int kTimerTimeoutSec = 15;
 
 // MySQL 连接信息（与本地环境一致）
 const char* kDbUrl = "127.0.0.1";
@@ -169,10 +171,25 @@ void WebServer::AddFd(int fd, bool is_listen) {
 void WebServer::EventLoop() {
     epoll_event events[kMaxEvents];
     while (true) {
-        const int num = epoll_wait(epoll_fd_, events, kMaxEvents, -1);
+        // 以最近的定时器到期时间作为 epoll_wait 超时，到期后检查非活跃连接
+        const time_t next_expire = TimerManager::GetInstance().GetNextExpire();
+        int timeout_ms = -1;
+        if (next_expire > 0) {
+            const time_t now = std::time(nullptr);
+            timeout_ms = static_cast<int>((next_expire - now) * 1000);
+            if (timeout_ms < 0) {
+                timeout_ms = 0;
+            }
+        }
+        const int num = epoll_wait(epoll_fd_, events, kMaxEvents, timeout_ms);
         if (num < 0 && errno != EINTR) {
             LOG_ERROR("WebServer: epoll_wait failed: %s", strerror(errno));
             break;
+        }
+        // 关闭到期连接（对齐 TinyWebServer timer_handler 的 tick）
+        for (const int fd : TimerManager::GetInstance().Tick()) {
+            LOG_INFO("WebServer: timeout close fd=%d", fd);
+            users_[fd].Close();  // Close 内部会删除定时器（幂等）
         }
         for (int i = 0; i < num; ++i) {
             const int fd = events[i].data.fd;
@@ -210,6 +227,8 @@ void WebServer::DealWithListen() {
             return;
         }
         users_[connfd].Init(connfd, client_addr, root_dir_, conn_et_);
+        // 注册超时定时器：无活动连接到期后关闭
+        TimerManager::GetInstance().AddTimer(connfd, kTimerTimeoutSec);
         LOG_INFO("WebServer: new connection fd=%d, total=%d", connfd,
                  HttpConn::user_count_.load());
         return;
@@ -232,12 +251,16 @@ void WebServer::DealWithListen() {
             break;
         }
         users_[connfd].Init(connfd, client_addr, root_dir_, conn_et_);
+        // 注册超时定时器：无活动连接到期后关闭
+        TimerManager::GetInstance().AddTimer(connfd, kTimerTimeoutSec);
         LOG_INFO("WebServer: new connection fd=%d, total=%d", connfd,
                  HttpConn::user_count_.load());
     }
 }
 
 void WebServer::DealWithRead(int fd) {
+    // 连接有数据活动，顺延超时时间（对齐 TinyWebServer adjust_timer）
+    TimerManager::GetInstance().AdjustTimer(fd, kTimerTimeoutSec);
     // 提交连接到线程池处理（对齐 TinyWebServer dealwithread）：
     //   proactor：主线程读取数据，线程池负责处理（构造响应/发送/关闭）
     //   reactor：直接提交连接，线程池负责读取并处理
@@ -253,6 +276,8 @@ void WebServer::DealWithRead(int fd) {
 }
 
 void WebServer::DealWithWrite(int fd) {
+    // 连接有写活动，顺延超时时间（对齐 TinyWebServer adjust_timer）
+    TimerManager::GetInstance().AdjustTimer(fd, kTimerTimeoutSec);
     // 发送缓冲区恢复可写，继续发送未完成的响应（对齐 TinyWebServer dealwithwrite）：
     //   reactor：发送任务送回线程池，由工作线程执行写（写操作也在 worker 内完成）
     //   proactor：主线程直接发送（写操作集中在主线程）

@@ -9,6 +9,7 @@
 #include "../include/HttpConn.h"
 #include "../include/Log.h"
 #include "../include/ThreadPool.h"
+#include "../include/TimerManager.h"
 
 // Web 服务器类（对齐 TinyWebServer 的 webserver 设计）。
 // 职责：封装各模块初始化（日志、数据库连接池、线程池、事件模式、监听 socket）与
