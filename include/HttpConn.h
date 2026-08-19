@@ -1,5 +1,7 @@
 #pragma once
 
+#include <atomic>
+#include <cstdint>
 #include <netinet/in.h>
 #include <sys/stat.h>
 #include <sys/uio.h>
@@ -48,7 +50,16 @@ public:
         kLineOpen     // 行不完整
     };
 
+    // 处理阶段（对齐 TinyWebServer m_state）：线程池按此决定执行何种操作
+    enum class ProcessState {
+        kStateRead = 0,   // 读与处理阶段：执行 Read/Process
+        kStateWrite = 1   // 发送阶段：执行 Write
+    };
+
     HttpConn();
+
+    // 析构函数（virtual：线程池以基类指针调用，测试可派生覆写）
+    virtual ~HttpConn() = default;
 
     // 初始化连接：保存 socket/地址/根目录，注册到 epoll 并置非阻塞
     // sockfd:  连接 socket；addr: 客户端地址；root: 静态资源根目录；
@@ -60,24 +71,54 @@ public:
     void InitMysqlResult(ConnectionPool& pool);
 
     // 读取客户端请求数据（循环读取，ET 读到 EAGAIN）
-    bool Read();
+    virtual bool Read();
 
     // 处理请求：状态机解析 + 构造响应报文
-    void Process();
+    virtual void Process();
 
-    // 发送响应数据（mmap 文件 + 响应头分散写）
-    bool Write();
+    // 发送响应数据（mmap 文件 + 响应头分散写）。
+    // 对齐 TinyWebServer：发送缓冲区满时重新注册 EPOLLOUT（保留 EPOLLONESHOT）
+    // 并立即返回，由事件循环在 socket 可写时再次调用本方法继续发送，不忙等占线程。
+    virtual bool Write();
+
+    // 查询响应是否已全部发送完成（线程池/事件循环据此决定关闭连接或等待下次 EPOLLOUT）
+    bool WriteDone() const {
+        return bytes_to_send_ <= 0;
+    }
+
+    // proactor 模式：工作线程处理完请求后调用，重新注册 EPOLLOUT，
+    // 响应发送交由主线程事件循环驱动（actor 模型下写操作集中到主线程）
+    void EnableWrite();
+
+    // 请求不完整（半包）时调用：重新注册 EPOLLIN，等待客户端继续发送，
+    // 下次数据到达后再次 Read/Process（对齐 TinyWebServer NO_REQUEST → modfd(EPOLLIN)）
+    void ContinueRead();
+
+    // 连接是否仍有效（sockfd 未关闭；Process 失败会内部 Close，用于区分半包与失败）
+    bool IsConnected() const {
+        return sockfd_ > 0;
+    }
+
+    // 当前是否处于发送阶段（线程池据此决定执行 Write 还是 Read/Process）
+    bool IsWriteState() const {
+        return state_ == ProcessState::kStateWrite;
+    }
+
+    // 进入发送阶段（对齐 TinyWebServer：process 完成后 m_state 置 1）
+    void SetWriteState() {
+        state_ = ProcessState::kStateWrite;
+    }
 
     // 关闭连接并从 epoll 移除
-    void Close();
+    virtual void Close();
 
     // 获取客户端地址
     sockaddr_in* GetAddress();
 
     // epoll 实例（静态，供连接注册使用）
     static int epoll_fd_;
-    // 当前活跃连接数
-    static int user_count_;
+    // 当前活跃连接数（原子类型，多线程并发增删安全）
+    static std::atomic<int> user_count_;
 
 private:
     // 重置连接解析状态
@@ -110,6 +151,9 @@ private:
     // 释放文件映射
     void Unmap();
 
+    // 重新注册 epoll 事件（对齐 TinyWebServer modfd），Write 未完成时注册 EPOLLOUT
+    void ModFd(uint32_t events);
+
     // 向写缓冲追加格式化响应内容
     bool AddResponse(const char* format, ...);
 
@@ -138,6 +182,7 @@ private:
     sockaddr_in addr_;       // 客户端地址
     std::string root_;       // 静态资源根目录
     bool conn_et_;           // 连接触发模式：true ET / false LT
+    ProcessState state_;     // 处理阶段：读/处理 or 发送（对齐 TinyWebServer m_state）
 
     char read_buf_[kReadBufferSize];  // 读缓冲
     int read_index_;                  // 已读入字节数

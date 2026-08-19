@@ -41,7 +41,7 @@ std::mutex users_mutex;
 }  // namespace
 
 int HttpConn::epoll_fd_ = -1;
-int HttpConn::user_count_ = 0;
+std::atomic<int> HttpConn::user_count_{0};
 
 HttpConn::HttpConn() : sockfd_(-1), conn_et_(false) {
     InitRequest();
@@ -103,6 +103,7 @@ void HttpConn::InitRequest() {
     content_length_ = 0;
     string_ = nullptr;
     cgi_ = 0;
+    state_ = ProcessState::kStateRead;  // 初始处于读与处理阶段
     start_line_ = 0;
     checked_index_ = 0;
     read_index_ = 0;
@@ -120,9 +121,19 @@ bool HttpConn::Read() {
     if (read_index_ >= kReadBufferSize) {
         return false;
     }
-    // 统一循环读取直到 EAGAIN：
-    // 连接注册了 EPOLLONESHOT，事件只触发一次，必须一次取空缓冲，
-    // 否则剩余数据不再触发事件，Close 时残留数据导致连接 RST
+    if (!conn_et_) {
+        // LT 模式：读一次即可（对齐 TinyWebServer read_once）。
+        // LT 特性保证：只要内核缓冲还有未读数据，重新注册 EPOLLIN 后会持续触发，
+        // 配合半包处理（ContinueRead 重新注册 EPOLLIN）继续读取，无需一次读空。
+        const ssize_t bytes_read =
+            recv(sockfd_, read_buf_ + read_index_, kReadBufferSize - read_index_, 0);
+        if (bytes_read <= 0) {
+            return false;  // 对端关闭或读失败
+        }
+        read_index_ += static_cast<int>(bytes_read);
+        return true;
+    }
+    // ET 模式：事件只触发一次，必须循环读取直到 EAGAIN 一次取空缓冲
     while (true) {
         const ssize_t bytes_read =
             recv(sockfd_, read_buf_ + read_index_, kReadBufferSize - read_index_, 0);
@@ -398,7 +409,10 @@ void HttpConn::Process() {
     }
     if (!ProcessWrite(read_ret)) {
         Close();
+        return;
     }
+    // 响应构造完成，进入发送阶段（对齐 TinyWebServer：process 后 m_state 置 1）
+    SetWriteState();
 }
 
 bool HttpConn::Write() {
@@ -410,9 +424,11 @@ bool HttpConn::Write() {
         const ssize_t n = writev(sockfd_, iv_, iv_count_);
         if (n < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                // 非阻塞发送缓冲区满，短暂等待后重试
-                usleep(1000);
-                continue;
+                // 发送缓冲区满：重新注册 EPOLLOUT（保留 EPOLLONESHOT）后立即返回，
+                // 事件循环在 socket 可写时再次调用 Write() 继续发送（对齐 TinyWebServer）。
+                // 连接从此刻起由事件循环接管，线程池工作线程立即释放。
+                ModFd(EPOLLOUT);
+                return true;
             }
             Unmap();
             return false;
@@ -434,6 +450,30 @@ bool HttpConn::Write() {
             return true;
         }
     }
+}
+
+void HttpConn::ModFd(uint32_t events) {
+    // 重新注册 epoll 事件（对齐 TinyWebServer modfd）：保留 EPOLLONESHOT，
+    // 按连接触发模式决定是否保留边缘触发
+    epoll_event event;
+    event.events = events | EPOLLONESHOT;
+    if (conn_et_) {
+        event.events |= EPOLLET;
+    }
+    event.data.fd = sockfd_;
+    epoll_ctl(epoll_fd_, EPOLL_CTL_MOD, sockfd_, &event);
+}
+
+void HttpConn::EnableWrite() {
+    // proactor 模式：工作线程处理完请求后调用，注册 EPOLLOUT 把连接交还主线程，
+    // 由事件循环的 EPOLLOUT 分支调用 Write() 发送响应（写操作集中在主线程）
+    ModFd(EPOLLOUT);
+}
+
+void HttpConn::ContinueRead() {
+    // 请求不完整（半包）：重新注册 EPOLLIN（保留 EPOLLONESHOT）等待更多数据。
+    // LT 下未读数据会持续触发，ET 下新数据到达会再次触发（对齐 TinyWebServer modfd(EPOLLIN)）
+    ModFd(EPOLLIN);
 }
 
 void HttpConn::Close() {

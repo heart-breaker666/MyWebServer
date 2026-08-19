@@ -33,7 +33,8 @@ WebServer::WebServer(const Config& config)
       listen_fd_(-1),
       epoll_fd_(-1),
       listen_et_(false),
-      conn_et_(false) {
+      conn_et_(false),
+      thread_pool_(nullptr) {
     // 连接数组（fd 索引），对齐 TinyWebServer 的 users
     users_ = new HttpConn[kMaxFd];
     // 静态资源根目录：当前工作目录 + /root
@@ -48,6 +49,7 @@ WebServer::WebServer(const Config& config)
 
 WebServer::~WebServer() {
     delete[] users_;
+    delete thread_pool_;
     if (listen_fd_ > 0) {
         close(listen_fd_);
     }
@@ -85,10 +87,20 @@ void WebServer::InitSqlPool() {
     LOG_INFO("MyWebServer: user table loaded");
 }
 
+void WebServer::InitThreadPool() {
+    // 初始化线程池：-t 控制线程数，-a 控制并发模型（对齐 thread_pool）
+    thread_pool_ = new ThreadPool(
+        config_.GetThreadPoolSize(), 10000,
+        config_.IsReactorModel() ? 1 : 0);
+    LOG_INFO("MyWebServer: thread pool ready, threads=%d reactor=%d",
+             config_.GetThreadPoolSize(), config_.IsReactorModel() ? 1 : 0);
+}
+
 void WebServer::Run() {
     InitLog();
     InitSqlPool();
     InitEventMode();
+    InitThreadPool();
     InitSocket();
     EventLoop();
 }
@@ -173,6 +185,9 @@ void WebServer::EventLoop() {
                 users_[fd].Close();
             } else if (events[i].events & EPOLLIN) {
                 DealWithRead(fd);
+            } else if (events[i].events & EPOLLOUT) {
+                // 发送缓冲区恢复可写，继续发送未完成的响应（对齐 TinyWebServer eventLoop）
+                DealWithWrite(fd);
             }
         }
     }
@@ -196,7 +211,7 @@ void WebServer::DealWithListen() {
         }
         users_[connfd].Init(connfd, client_addr, root_dir_, conn_et_);
         LOG_INFO("WebServer: new connection fd=%d, total=%d", connfd,
-                 HttpConn::user_count_);
+                 HttpConn::user_count_.load());
         return;
     }
     while (true) {
@@ -218,16 +233,41 @@ void WebServer::DealWithListen() {
         }
         users_[connfd].Init(connfd, client_addr, root_dir_, conn_et_);
         LOG_INFO("WebServer: new connection fd=%d, total=%d", connfd,
-                 HttpConn::user_count_);
+                 HttpConn::user_count_.load());
     }
 }
 
 void WebServer::DealWithRead(int fd) {
-    // 简化版 dealwithread：读请求 → 解析构造响应 → 发送 → 关闭
-    if (users_[fd].Read()) {
-        users_[fd].Process();
-        users_[fd].Write();
+    // 提交连接到线程池处理（对齐 TinyWebServer dealwithread）：
+    //   proactor：主线程读取数据，线程池负责处理（构造响应/发送/关闭）
+    //   reactor：直接提交连接，线程池负责读取并处理
+    if (!config_.IsReactorModel()) {
+        if (users_[fd].Read() && thread_pool_->Append(&users_[fd])) {
+            return;  // 任务已提交，连接生命周期由线程池接管
+        }
+    } else if (thread_pool_->Append(&users_[fd])) {
+        return;
     }
+    // 读取失败或任务队列满：关闭连接
     users_[fd].Close();
-    LOG_INFO("WebServer: close fd=%d, total=%d", fd, HttpConn::user_count_);
+}
+
+void WebServer::DealWithWrite(int fd) {
+    // 发送缓冲区恢复可写，继续发送未完成的响应（对齐 TinyWebServer dealwithwrite）：
+    //   reactor：发送任务送回线程池，由工作线程执行写（写操作也在 worker 内完成）
+    //   proactor：主线程直接发送（写操作集中在主线程）
+    if (config_.IsReactorModel()) {
+        // 进入发送阶段（对齐 TinyWebServer：append 前置 m_state=1），交由线程池续写
+        users_[fd].SetWriteState();
+        if (thread_pool_->Append(&users_[fd])) {
+            return;  // 已提交，连接生命周期由线程池接管
+        }
+        users_[fd].Close();  // 任务队列满：关闭连接
+        return;
+    }
+    // proactor：发送失败或已全部发完则关闭连接；
+    // 仍未发完：Write() 内部已重新注册 EPOLLOUT，等待下次可写事件。
+    if (!users_[fd].Write() || users_[fd].WriteDone()) {
+        users_[fd].Close();
+    }
 }
