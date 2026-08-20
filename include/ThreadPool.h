@@ -102,10 +102,17 @@ private:
                 // reactor：按连接处理阶段分发（对齐 TinyWebServer run() 的 m_state 分支）
                 if (request->IsWriteState()) {
                     // 发送阶段：仅继续发送未完成的响应。
-                    // 发送失败或已全部发完：关闭连接；未发完：Write() 内部已重新注册
-                    // EPOLLOUT，连接交由事件循环再次送回线程池，工作线程立即释放。
-                    if (!request->Write() || request->WriteDone()) {
+                    // 发送失败：关闭连接；全部发完：keep-alive 则重置连接等待下一请求，
+                    // 否则关闭；未发完：Write() 内部已重新注册 EPOLLOUT，
+                    // 连接交由事件循环再次送回线程池，工作线程立即释放。
+                    if (!request->Write()) {
                         request->Close();
+                    } else if (request->WriteDone()) {
+                        if (request->IsKeepAlive()) {
+                            request->Reuse();
+                        } else {
+                            request->Close();
+                        }
                     }
                     continue;
                 }

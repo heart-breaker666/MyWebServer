@@ -15,6 +15,8 @@
 //   从状态机 parse_line 逐行切分，主状态机按 请求行 → 请求头 → 请求体 推进；
 // 使用 add_* 系列接口构造响应报文，静态文件通过 mmap + writev 分散写发送；
 // POST 注册/登录通过数据库 user 表校验（前端 action=/2 登录、/3 注册）。
+// 支持 keep-alive 长连接：客户端要求保持连接（HTTP/1.1 默认）时，
+// 响应发送完成后重置解析状态并重新注册 EPOLLIN 复用连接，空闲超时由定时器关闭。
 class HttpConn {
 public:
     static constexpr int kFileNameLen = 200;     // 文件路径最长
@@ -98,6 +100,14 @@ public:
     bool IsConnected() const {
         return sockfd_ > 0;
     }
+
+    // 当前请求是否要求保持连接（keep-alive）：响应发送完成后据此决定复用连接还是关闭
+    bool IsKeepAlive() const {
+        return linger_;
+    }
+
+    // 复用连接处理下一请求：重置解析状态机并重新注册 EPOLLIN（keep-alive 时调用）
+    void Reuse();
 
     // 当前是否处于发送阶段（线程池据此决定执行 Write 还是 Read/Process）
     bool IsWriteState() const {

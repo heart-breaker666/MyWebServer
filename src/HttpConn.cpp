@@ -208,6 +208,8 @@ HttpConn::HttpCode HttpConn::ParseRequestLine(char* text) {
     if (strcasecmp(version_, "HTTP/1.1") != 0) {
         return kBadRequest;
     }
+    // HTTP/1.1 默认保持连接（keep-alive），除非请求头显式 Connection: close
+    linger_ = true;
     // 去掉 URL 中的协议前缀
     if (strncasecmp(url_, "http://", 7) == 0) {
         url_ += 7;
@@ -241,7 +243,9 @@ HttpConn::HttpCode HttpConn::ParseHeader(char* text) {
         text += 11;
         text += std::strspn(text, " \t");
         if (strcasecmp(text, "keep-alive") == 0) {
-            linger_ = true;
+            linger_ = true;   // 显式要求保持连接
+        } else if (strcasecmp(text, "close") == 0) {
+            linger_ = false;  // 显式要求关闭连接
         }
     } else if (strncasecmp(text, "Content-length:", 15) == 0) {
         text += 15;
@@ -477,6 +481,12 @@ void HttpConn::ContinueRead() {
     ModFd(EPOLLIN);
 }
 
+void HttpConn::Reuse() {
+    // keep-alive：重置解析状态机，重新注册 EPOLLIN 等待下一请求
+    InitRequest();
+    ModFd(EPOLLIN);
+}
+
 void HttpConn::Close() {
     if (sockfd_ > 0) {
         const int fd = sockfd_;
@@ -551,9 +561,8 @@ bool HttpConn::AddContentLength(int content_length) {
 }
 
 bool HttpConn::AddLinger() {
-    // 现阶段服务器每请求处理完即关闭连接（DealWithRead 无条件 Close），
-    // 响应头统一为 close，避免与 keep-alive 行为不一致导致连接复用混乱
-    return AddResponse("Connection:%s\r\n", "close");
+    // 按请求的 Connection 头决定响应连接方式：keep-alive 复用连接，close 发送后关闭
+    return AddResponse("Connection:%s\r\n", linger_ ? "keep-alive" : "close");
 }
 
 bool HttpConn::AddBlankLine() {

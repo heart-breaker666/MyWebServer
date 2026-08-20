@@ -290,9 +290,15 @@ void WebServer::DealWithWrite(int fd) {
         users_[fd].Close();  // 任务队列满：关闭连接
         return;
     }
-    // proactor：发送失败或已全部发完则关闭连接；
+    // proactor：发送失败则关闭连接；发送完成时按 keep-alive 决定复用连接还是关闭；
     // 仍未发完：Write() 内部已重新注册 EPOLLOUT，等待下次可写事件。
-    if (!users_[fd].Write() || users_[fd].WriteDone()) {
+    if (!users_[fd].Write()) {
         users_[fd].Close();
+    } else if (users_[fd].WriteDone()) {
+        if (users_[fd].IsKeepAlive()) {
+            users_[fd].Reuse();  // keep-alive：重置连接状态，等待下一请求
+        } else {
+            users_[fd].Close();  // 短连接：发送完成即关闭
+        }
     }
 }
