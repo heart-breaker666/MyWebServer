@@ -68,7 +68,7 @@ private:
     std::mutex file_mutex_;            // 保护文件写入与分割
 };
 
-// 日志宏封装（TinyWebServer 风格，不带模块参数）
+// 日志宏封装（自动附加日志级别，不带模块参数）
 #define LOG_DEBUG(...) \
     Log::GetInstance().WriteLog(Log::LogLevel::kDebug, __VA_ARGS__)
 #define LOG_INFO(...) \

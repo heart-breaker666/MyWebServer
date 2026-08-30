@@ -14,11 +14,11 @@
 
 namespace {
 
-// 最大连接数（对齐 TinyWebServer 的 MAX_FD）
+// 最大连接数
 const int kMaxFd = 65536;
 // 每次 epoll_wait 最多返回的事件数
 const int kMaxEvents = 1024;
-// 连接超时时间（秒）：客户端连接后无任何活动则被关闭（对齐 TinyWebServer 3*TIMESLOT）
+// 连接超时时间（秒）：客户端连接后无任何活动则被关闭
 constexpr int kTimerTimeoutSec = 15;
 
 // MySQL 连接信息（与本地环境一致）
@@ -37,7 +37,7 @@ WebServer::WebServer(const Config& config)
       listen_et_(false),
       conn_et_(false),
       thread_pool_(nullptr) {
-    // 连接数组（fd 索引），对齐 TinyWebServer 的 users
+    // 连接数组（fd 索引）
     users_ = new HttpConn[kMaxFd];
     // 静态资源根目录：当前工作目录 + /root
     char cwd[256];
@@ -61,7 +61,7 @@ WebServer::~WebServer() {
 }
 
 void WebServer::InitEventMode() {
-    // 对齐 TinyWebServer trig_mode()：由 -m 组合决定 listen/conn 触发模式
+    // 由 -m 组合决定 listen/conn 触发模式
     listen_et_ = config_.IsListenfdET();
     conn_et_ = config_.IsConnfdET();
     LOG_INFO("WebServer: event mode listenET=%d connET=%d", listen_et_ ? 1 : 0,
@@ -69,7 +69,7 @@ void WebServer::InitEventMode() {
 }
 
 void WebServer::InitLog() {
-    // 初始化日志系统：-l 控制同步/异步，-c 控制是否关闭（对齐 log_write）
+    // 初始化日志系统：-l 控制同步/异步，-c 控制是否关闭
     Log::GetInstance().Init("ServerLog", config_.GetCloseLog() ? 1 : 0, 8192,
                             5000000, config_.IsAsyncLog() ? 1024 : 0);
     LOG_INFO("MyWebServer starting: port=%d threads=%d sql_pool=%d",
@@ -78,23 +78,23 @@ void WebServer::InitLog() {
 }
 
 void WebServer::InitSqlPool() {
-    // 初始化数据库连接池：-s 控制连接数量（对齐 sql_pool）
+    // 初始化数据库连接池：-s 控制连接数量
     ConnectionPool& pool = ConnectionPool::GetInstance();
     pool.Init(kDbUrl, kDbUser, kDbPassword, kDbName, kDbPort,
               config_.GetSqlPoolSize(), config_.GetCloseLog() ? 1 : 0);
     LOG_INFO("MyWebServer: connection pool ready, free=%d",
              pool.GetFreeConnCount());
-    // 从数据库加载用户表，供注册/登录 CGI 校验（对齐 initmysql_result）
+    // 从数据库加载用户表，供注册/登录 CGI 校验
     users_[0].InitMysqlResult(pool);
     LOG_INFO("MyWebServer: user table loaded");
 }
 
 void WebServer::InitThreadPool() {
-    // 初始化线程池：-t 控制线程数，-a 控制并发模型（对齐 thread_pool）
+    // 初始化线程池：-t 控制线程数，-a 控制并发模型
     thread_pool_ = new ThreadPool(
         config_.GetThreadPoolSize(), 10000,
         config_.IsReactorModel() ? 1 : 0);
-    LOG_INFO("MyWebServer: thread pool ready, threads=%d reactor=%d",
+    LOG_INFO("MyWebServer: thread pool ready, threads=%d mode=%d",
              config_.GetThreadPoolSize(), config_.IsReactorModel() ? 1 : 0);
 }
 
@@ -108,7 +108,7 @@ void WebServer::Run() {
 }
 
 void WebServer::InitSocket() {
-    // 创建监听 socket（对齐 TinyWebServer eventListen）
+    // 创建监听 socket
     listen_fd_ = socket(PF_INET, SOCK_STREAM, 0);
     if (listen_fd_ < 0) {
         LOG_ERROR("WebServer: socket create failed: %s", strerror(errno));
@@ -186,14 +186,14 @@ void WebServer::EventLoop() {
             LOG_ERROR("WebServer: epoll_wait failed: %s", strerror(errno));
             break;
         }
-        // 关闭到期连接（对齐 TinyWebServer timer_handler 的 tick）
+        // 关闭到期连接（定时器 Tick 返回的 fd）
         for (const int fd : TimerManager::GetInstance().Tick()) {
             LOG_INFO("WebServer: timeout close fd=%d", fd);
             users_[fd].Close();  // Close 内部会删除定时器（幂等）
         }
         for (int i = 0; i < num; ++i) {
             const int fd = events[i].data.fd;
-            // 处理新连接（对齐 TinyWebServer eventLoop 分发顺序）
+            // 处理新连接
             if (fd == listen_fd_) {
                 DealWithListen();
             } else if (events[i].events & (EPOLLRDHUP | EPOLLHUP | EPOLLERR)) {
@@ -203,7 +203,7 @@ void WebServer::EventLoop() {
             } else if (events[i].events & EPOLLIN) {
                 DealWithRead(fd);
             } else if (events[i].events & EPOLLOUT) {
-                // 发送缓冲区恢复可写，继续发送未完成的响应（对齐 TinyWebServer eventLoop）
+                // 发送缓冲区恢复可写，继续发送未完成的响应
                 DealWithWrite(fd);
             }
         }
@@ -211,7 +211,7 @@ void WebServer::EventLoop() {
 }
 
 void WebServer::DealWithListen() {
-    // 对齐 TinyWebServer dealclientdata：LT 一次 accept，ET 循环 accept
+    // LT 一次 accept，ET 循环 accept
     if (!listen_et_) {
         struct sockaddr_in client_addr;
         socklen_t addr_len = sizeof(client_addr);
@@ -259,11 +259,11 @@ void WebServer::DealWithListen() {
 }
 
 void WebServer::DealWithRead(int fd) {
-    // 连接有数据活动，顺延超时时间（对齐 TinyWebServer adjust_timer）
+    // 连接有数据活动，顺延超时时间
     TimerManager::GetInstance().AdjustTimer(fd, kTimerTimeoutSec);
-    // 提交连接到线程池处理（对齐 TinyWebServer dealwithread）：
-    //   proactor：主线程读取数据，线程池负责处理（构造响应/发送/关闭）
-    //   reactor：直接提交连接，线程池负责读取并处理
+    // 提交连接到线程池处理：
+    //   半同步半异步：主线程读取数据，线程池负责处理（构造响应/发送/关闭）
+    //   多线程 reactor：直接提交连接，线程池负责读取并处理
     if (!config_.IsReactorModel()) {
         if (users_[fd].Read() && thread_pool_->Append(&users_[fd])) {
             return;  // 任务已提交，连接生命周期由线程池接管
@@ -276,13 +276,13 @@ void WebServer::DealWithRead(int fd) {
 }
 
 void WebServer::DealWithWrite(int fd) {
-    // 连接有写活动，顺延超时时间（对齐 TinyWebServer adjust_timer）
+    // 连接有写活动，顺延超时时间
     TimerManager::GetInstance().AdjustTimer(fd, kTimerTimeoutSec);
-    // 发送缓冲区恢复可写，继续发送未完成的响应（对齐 TinyWebServer dealwithwrite）：
-    //   reactor：发送任务送回线程池，由工作线程执行写（写操作也在 worker 内完成）
-    //   proactor：主线程直接发送（写操作集中在主线程）
+    // 发送缓冲区恢复可写，继续发送未完成的响应：
+    //   多线程 reactor：发送任务送回线程池，由工作线程执行写（写操作也在 worker 内完成）
+    //   半同步半异步：主线程直接发送（写操作集中在主线程）
     if (config_.IsReactorModel()) {
-        // 进入发送阶段（对齐 TinyWebServer：append 前置 m_state=1），交由线程池续写
+        // 进入发送阶段（append 前置写入状态），交由线程池续写
         users_[fd].SetWriteState();
         if (thread_pool_->Append(&users_[fd])) {
             return;  // 已提交，连接生命周期由线程池接管
@@ -290,7 +290,7 @@ void WebServer::DealWithWrite(int fd) {
         users_[fd].Close();  // 任务队列满：关闭连接
         return;
     }
-    // proactor：发送失败则关闭连接；发送完成时按 keep-alive 决定复用连接还是关闭；
+    // 半同步半异步：发送失败则关闭连接；发送完成时按 keep-alive 决定复用连接还是关闭；
     // 仍未发完：Write() 内部已重新注册 EPOLLOUT，等待下次可写事件。
     if (!users_[fd].Write()) {
         users_[fd].Close();

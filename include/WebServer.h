@@ -11,7 +11,7 @@
 #include "../include/ThreadPool.h"
 #include "../include/TimerManager.h"
 
-// Web 服务器类（对齐 TinyWebServer 的 webserver 设计）。
+// Web 服务器类。
 // 职责：封装各模块初始化（日志、数据库连接池、线程池、事件模式、监听 socket）与
 //       epoll 事件循环（eventLoop）；使用 HttpConn 数组（users，fd 索引）管理连接，
 //       将连接提交到线程池（ThreadPool，任务固定为 HttpConn）实现任务的自动分配与并发处理。
@@ -27,19 +27,19 @@ public:
     void Run();
 
 private:
-    // 初始化日志系统（对齐 TinyWebServer log_write()）
+    // 初始化日志系统
     void InitLog();
 
-    // 初始化数据库连接池（对齐 TinyWebServer sql_pool()）
+    // 初始化数据库连接池
     void InitSqlPool();
 
-    // 初始化线程池（对齐 TinyWebServer thread_pool()）
+    // 初始化线程池
     void InitThreadPool();
 
-    // 根据配置设置监听/连接的触发模式（对齐 TinyWebServer trig_mode()）
+    // 根据配置设置监听/连接的触发模式
     void InitEventMode();
 
-    // 创建监听 socket、epoll 并注册监听描述符（对齐 eventListen）
+    // 创建监听 socket、epoll 并注册监听描述符
     void InitSocket();
 
     // 将 fd 注册到 epoll（is_listen 决定使用监听/连接触发模式）
@@ -48,16 +48,16 @@ private:
     // 设置 fd 为非阻塞
     static void SetNonBlocking(int fd);
 
-    // 事件循环主函数：epoll_wait 并分发事件（对齐 eventLoop）
+    // 事件循环主函数：epoll_wait 并分发事件
     void EventLoop();
 
-    // 处理新连接：accept 并初始化 HttpConn（LT 一次 / ET 循环，对齐 dealclientdata）
+    // 处理新连接：accept 并初始化 HttpConn（LT 一次 / ET 循环）
     void DealWithListen();
 
-    // 处理连接可读事件：读请求、解析并响应（对齐 dealwithread 简化版）
+    // 处理连接可读事件：读请求、解析并响应
     void DealWithRead(int fd);
 
-    // 处理连接可写事件：继续发送未完成的响应（对齐 dealwithwrite）
+    // 处理连接可写事件：继续发送未完成的响应
     void DealWithWrite(int fd);
 
     const Config& config_;  // 服务器配置

@@ -34,7 +34,7 @@ const char* kError500Title = "Internal Error";
 const char* kError500Form =
     "There was an unusual problem serving the request file.\n";
 
-// 用户表（用户名 -> 密码），注册登录校验用（对齐 TinyWebServer 全局 users）
+// 用户表（用户名 -> 密码），注册登录校验用
 std::map<std::string, std::string> users;
 // 保护用户表
 std::mutex users_mutex;
@@ -57,7 +57,7 @@ void HttpConn::Init(int sockfd, const sockaddr_in& addr,
 
     // 注册到 epoll（按连接触发模式）
     // 使用 EPOLLONESHOT：事件触发一次后自动移出就绪列表，
-    // 防止同批事件重复处理或 fd 重用后旧事件误关闭新连接（对齐 TinyWebServer）
+    // 防止同批事件重复处理或 fd 重用后旧事件误关闭新连接
     epoll_event event;
     event.events = EPOLLIN | EPOLLONESHOT;
     if (conn_et_) {
@@ -94,7 +94,7 @@ void HttpConn::InitMysqlResult(ConnectionPool& pool) {
 }
 
 void HttpConn::InitRequest() {
-    // 重置解析状态机与各索引（对齐 TinyWebServer init()）
+    // 重置解析状态机与各索引
     check_state_ = kCheckRequestLine;
     linger_ = false;
     method_ = kGet;
@@ -123,7 +123,7 @@ bool HttpConn::Read() {
         return false;
     }
     if (!conn_et_) {
-        // LT 模式：读一次即可（对齐 TinyWebServer read_once）。
+        // LT 模式：读一次即可。
         // LT 特性保证：只要内核缓冲还有未读数据，重新注册 EPOLLIN 后会持续触发，
         // 配合半包处理（ContinueRead 重新注册 EPOLLIN）继续读取，无需一次读空。
         const ssize_t bytes_read =
@@ -317,7 +317,7 @@ HttpConn::HttpCode HttpConn::DoRequest() {
         return kBadRequest;
     }
 
-    // CGI：POST 且 URL 为 /2（登录）或 /3（注册），对齐 TinyWebServer
+    // CGI：POST 且 URL 为 /2（登录）或 /3（注册）
     if (cgi_ == 1 && (*(p + 1) == '2' || *(p + 1) == '3')) {
         // 解析表单：user=xxx&passwd=yyy
         // 用 std::string 定位解析，避免固定偏移（&passwd= 为 8 字符）导致的截断错误
@@ -331,7 +331,7 @@ HttpConn::HttpCode HttpConn::DoRequest() {
         }
         name = body.substr(user_pos + 5, passwd_pos - user_pos - 5);
         password = body.substr(passwd_pos + 8);
-        // 限制长度，防止超长输入（对齐 TinyWebServer 的 100 字符缓冲）
+        // 限制长度，防止超长输入
         if (name.size() > 99) {
             name.resize(99);
         }
@@ -416,7 +416,7 @@ void HttpConn::Process() {
         Close();
         return;
     }
-    // 响应构造完成，进入发送阶段（对齐 TinyWebServer：process 后 m_state 置 1）
+    // 响应构造完成，进入发送阶段
     SetWriteState();
 }
 
@@ -430,7 +430,7 @@ bool HttpConn::Write() {
         if (n < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 // 发送缓冲区满：重新注册 EPOLLOUT（保留 EPOLLONESHOT）后立即返回，
-                // 事件循环在 socket 可写时再次调用 Write() 继续发送（对齐 TinyWebServer）。
+                // 事件循环在 socket 可写时再次调用 Write() 继续发送。
                 // 连接从此刻起由事件循环接管，线程池工作线程立即释放。
                 ModFd(EPOLLOUT);
                 return true;
@@ -458,7 +458,7 @@ bool HttpConn::Write() {
 }
 
 void HttpConn::ModFd(uint32_t events) {
-    // 重新注册 epoll 事件（对齐 TinyWebServer modfd）：保留 EPOLLONESHOT，
+    // 重新注册 epoll 事件：保留 EPOLLONESHOT，
     // 按连接触发模式决定是否保留边缘触发
     epoll_event event;
     event.events = events | EPOLLONESHOT;
@@ -470,14 +470,14 @@ void HttpConn::ModFd(uint32_t events) {
 }
 
 void HttpConn::EnableWrite() {
-    // proactor 模式：工作线程处理完请求后调用，注册 EPOLLOUT 把连接交还主线程，
+    // 半同步半异步模式：工作线程处理完请求后调用，注册 EPOLLOUT 把连接交还主线程，
     // 由事件循环的 EPOLLOUT 分支调用 Write() 发送响应（写操作集中在主线程）
     ModFd(EPOLLOUT);
 }
 
 void HttpConn::ContinueRead() {
     // 请求不完整（半包）：重新注册 EPOLLIN（保留 EPOLLONESHOT）等待更多数据。
-    // LT 下未读数据会持续触发，ET 下新数据到达会再次触发（对齐 TinyWebServer modfd(EPOLLIN)）
+    // LT 下未读数据会持续触发，ET 下新数据到达会再次触发
     ModFd(EPOLLIN);
 }
 

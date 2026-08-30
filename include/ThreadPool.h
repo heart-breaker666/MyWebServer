@@ -9,21 +9,21 @@
 
 #include "../include/HttpConn.h"
 
-// 线程池类（对齐 TinyWebServer 的 threadpool，任务类型固定为 HttpConn）。
+// 线程池类（任务类型固定为 HttpConn）。
 // 基于 std::queue 的 FIFO 等待队列，固定数量工作线程消费任务；
 // 任务按先进先出顺序被处理，无需模板化（服务器中任务始终是 HttpConn 连接）。
-// 任务执行按 HttpConn 的处理阶段（m_state）分发（对齐 TinyWebServer run()）：
-//   reactor：发送阶段仅执行 Write；读与处理阶段执行 Read+Process，
+// 任务执行按 HttpConn 的处理阶段（ProcessState）分发：
+//   多线程 reactor：发送阶段仅执行 Write；读与处理阶段执行 Read+Process，
 //            处理完成后注册 EPOLLOUT 交还事件循环，由 EPOLLOUT 事件把连接
 //            再次送回线程池进入发送阶段（读/处理与写分离）
-//   proactor：仅执行 Process（主线程负责读写），发送由主线程事件循环驱动
+//   半同步半异步：仅执行 Process（主线程负责读写），发送由主线程事件循环驱动
 // 同步机制：互斥锁 + 条件变量保护任务队列，避免竞态。
 class ThreadPool {
 public:
     // 构造函数：创建并启动 thread_number 个工作线程
     // thread_number: 工作线程数
     // max_requests:  等待队列最大长度，超过则拒绝提交任务
-    // actor_model:   并发模型，0 proactor / 1 reactor
+    // actor_model:   并发模型，0 半同步半异步 / 1 多线程 reactor
     explicit ThreadPool(int thread_number = 8, int max_requests = 10000,
                         int actor_model = 0)
         : thread_number_(thread_number),
@@ -51,7 +51,7 @@ public:
     }
 
     // 添加任务到等待队列（FIFO）。队列满时返回 false（任务被拒绝）。
-    // request: HttpConn 连接对象指针（proactor 模式数据已由调用方读取）
+    // request: HttpConn 连接对象指针（半同步半异步模式数据已由调用方读取）
     bool Append(HttpConn* request) {
         if (request == nullptr) {
             return false;
@@ -99,7 +99,7 @@ private:
                 continue;
             }
             if (actor_model_ == 1) {
-                // reactor：按连接处理阶段分发（对齐 TinyWebServer run() 的 m_state 分支）
+                // 多线程 reactor：按连接处理阶段分发
                 if (request->IsWriteState()) {
                     // 发送阶段：仅继续发送未完成的响应。
                     // 发送失败：关闭连接；全部发完：keep-alive 则重置连接等待下一请求，
@@ -118,7 +118,7 @@ private:
                 }
                 // 读与处理阶段：读取数据并构造响应，处理完成后不直接发送，
                 // 而是注册 EPOLLOUT 交还事件循环，由 EPOLLOUT 事件把连接再次送回
-                // 线程池进入发送阶段（读/处理与写分离，对齐 TinyWebServer）
+                // 线程池进入发送阶段（读/处理与写分离）
                 if (!request->Read()) {
                     request->Close();
                     continue;
@@ -132,7 +132,7 @@ private:
                 }
                 // 否则 Process 内部失败已关闭连接
             } else {
-                // proactor：主线程已读好数据，线程池只负责处理；
+                // 半同步半异步：主线程已读好数据，线程池只负责处理；
                 // 发送由主线程事件循环驱动，写操作不在工作线程执行
                 request->Process();
                 if (request->IsWriteState()) {
@@ -148,7 +148,7 @@ private:
 
     int thread_number_;                    // 工作线程数
     int max_requests_;                     // 等待队列最大长度
-    int actor_model_;                      // 并发模型：0 proactor / 1 reactor
+    int actor_model_;                      // 并发模型：0 半同步半异步 / 1 多线程 reactor
     std::vector<std::thread> threads_;     // 工作线程集合
     std::queue<HttpConn*> work_queue_;     // 任务队列（FIFO）
     mutable std::mutex queue_mutex_;       // 保护任务队列

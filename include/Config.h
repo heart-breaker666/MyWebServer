@@ -27,7 +27,7 @@ public:
     // 是否关闭日志输出
     bool GetCloseLog() const;
 
-    // 是否为 reactor 并发模型（true reactor，false proactor）
+    // 是否多线程 reactor 并发模型（true 多线程 reactor，false 半同步半异步）
     bool IsReactorModel() const;
 
 private:
@@ -38,5 +38,5 @@ private:
     int sql_pool_size_;       // 数据库连接池数量
     int thread_pool_size_;    // 线程池线程数量
     int close_log_;           // 是否关闭日志：0 否，1 是
-    int concurrency_model_;   // 并发模型：0 proactor，1 reactor
+    int concurrency_model_;   // 并发模型：0 半同步半异步，1 多线程 reactor
 };

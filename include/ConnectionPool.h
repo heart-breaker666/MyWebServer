@@ -8,7 +8,7 @@
 #include <string>
 
 // 数据库连接池单例类（懒汉模式，C++11 magic static）。
-// 参考 TinyWebServer 的 sql_connection_pool 设计：
+// 设计：
 //   - 初始化时一次性创建 max_conn 条 MySQL 连接放入队列
 //   - 获取连接：队列为空时阻塞等待（条件变量，行为等价于信号量）
 //   - 释放连接：归还队列并唤醒等待线程

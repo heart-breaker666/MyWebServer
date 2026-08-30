@@ -10,7 +10,7 @@
 
 #include "../include/ConnectionPool.h"
 
-// HTTP 连接处理类（对齐 TinyWebServer 的 http_conn 设计）。
+// HTTP 连接处理类。
 // 使用主从状态机解析 HTTP 报文：
 //   从状态机 parse_line 逐行切分，主状态机按 请求行 → 请求头 → 请求体 推进；
 // 使用 add_* 系列接口构造响应报文，静态文件通过 mmap + writev 分散写发送；
@@ -52,7 +52,7 @@ public:
         kLineOpen     // 行不完整
     };
 
-    // 处理阶段（对齐 TinyWebServer m_state）：线程池按此决定执行何种操作
+    // 处理阶段：线程池按此决定执行何种操作
     enum class ProcessState {
         kStateRead = 0,   // 读与处理阶段：执行 Read/Process
         kStateWrite = 1   // 发送阶段：执行 Write
@@ -79,7 +79,7 @@ public:
     virtual void Process();
 
     // 发送响应数据（mmap 文件 + 响应头分散写）。
-    // 对齐 TinyWebServer：发送缓冲区满时重新注册 EPOLLOUT（保留 EPOLLONESHOT）
+    // 发送缓冲区满时重新注册 EPOLLOUT（保留 EPOLLONESHOT）
     // 并立即返回，由事件循环在 socket 可写时再次调用本方法继续发送，不忙等占线程。
     virtual bool Write();
 
@@ -88,12 +88,12 @@ public:
         return bytes_to_send_ <= 0;
     }
 
-    // proactor 模式：工作线程处理完请求后调用，重新注册 EPOLLOUT，
-    // 响应发送交由主线程事件循环驱动（actor 模型下写操作集中到主线程）
+    // 半同步半异步模式：工作线程处理完请求后调用，重新注册 EPOLLOUT，
+    // 响应发送交由主线程事件循环驱动（该模式下写操作集中到主线程）
     void EnableWrite();
 
     // 请求不完整（半包）时调用：重新注册 EPOLLIN，等待客户端继续发送，
-    // 下次数据到达后再次 Read/Process（对齐 TinyWebServer NO_REQUEST → modfd(EPOLLIN)）
+    // 下次数据到达后再次 Read/Process（半包时重新注册 EPOLLIN）
     void ContinueRead();
 
     // 连接是否仍有效（sockfd 未关闭；Process 失败会内部 Close，用于区分半包与失败）
@@ -114,7 +114,7 @@ public:
         return state_ == ProcessState::kStateWrite;
     }
 
-    // 进入发送阶段（对齐 TinyWebServer：process 完成后 m_state 置 1）
+    // 进入发送阶段（process 完成后）
     void SetWriteState() {
         state_ = ProcessState::kStateWrite;
     }
@@ -161,7 +161,7 @@ private:
     // 释放文件映射
     void Unmap();
 
-    // 重新注册 epoll 事件（对齐 TinyWebServer modfd），Write 未完成时注册 EPOLLOUT
+    // 重新注册 epoll 事件，Write 未完成时注册 EPOLLOUT
     void ModFd(uint32_t events);
 
     // 向写缓冲追加格式化响应内容
@@ -192,7 +192,7 @@ private:
     sockaddr_in addr_;       // 客户端地址
     std::string root_;       // 静态资源根目录
     bool conn_et_;           // 连接触发模式：true ET / false LT
-    ProcessState state_;     // 处理阶段：读/处理 or 发送（对齐 TinyWebServer m_state）
+    ProcessState state_;     // 处理阶段：读/处理 or 发送
 
     char read_buf_[kReadBufferSize];  // 读缓冲
     int read_index_;                  // 已读入字节数
