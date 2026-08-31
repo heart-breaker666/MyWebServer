@@ -17,7 +17,6 @@
 - 支持 POST 注册（`/3`）、登录（`/2`）并跳转资源页
 - 支持 keep-alive 长连接，空闲超时自动断开
 - 支持 4 种触发组合模式 × 2 种并发模型自由切换
-- 配套完整单元测试（日志 / 配置 / 连接池 / HTTP / 线程池 / 定时器）
 
 ## 目录结构
 
@@ -25,7 +24,6 @@
 MyWebServer/
 ├── src/         源文件（WebServer、HttpConn、ThreadPool、TimerManager、Log、Config、ConnectionPool）
 ├── include/     头文件
-├── test/        各模块单元测试
 ├── root/        静态资源（index.html 登录页、register.html 注册页、welcome.html 资源页、图片、视频）
 ├── docs/        文档（config.md、performance_analysis.md 等）
 ├── Makefile     构建脚本
@@ -58,8 +56,6 @@ CREATE TABLE IF NOT EXISTS user (
 
 ```bash
 make server        # 编译服务器
-make test          # 编译并运行全部单元测试
-make all           # 编译服务器 + 全部测试
 ```
 
 ### 2. 启动服务器
@@ -97,8 +93,6 @@ make all           # 编译服务器 + 全部测试
 
 ## 功能演示
 
-> 以下视频与图片为占位说明，请将对应文件放入 `docs/demo/` 与 `docs/benchmark/` 目录后即可自动展示。
-
 ### 注册演示
 
 <!-- 将注册演示视频保存为 docs/demo/register.mp4 -->
@@ -130,17 +124,3 @@ wrk -t8 -c1000 -d30s http://127.0.0.1:9006/index.html
 | `-m 3` ET/ET | ![m3a0](docs/benchmark/m3_a0.png) | ![m3a1](docs/benchmark/m3_a1.png) |
 
 <!-- 压测结果截图请按上述命名放入 docs/benchmark/ 目录（m<0-3>_a<0-1>.png） -->
-
-## 单元测试
-
-```bash
-make test
-```
-
-覆盖：日志系统、配置解析、数据库连接池、HTTP 状态机与 keep-alive、线程池调度、定时器管理。
-
-## 文档
-
-- [配置模块说明](docs/config.md)
-- [性能分析](docs/performance_analysis.md)
-- [面试问题整理](docs/interview_questions.md)
