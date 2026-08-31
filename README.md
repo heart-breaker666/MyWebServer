@@ -1,6 +1,6 @@
 # MyWebServer
 
-一个基于 Linux epoll 的高并发轻量级 HTTP 服务器（C++17），支持静态资源访问、用户注册/登录、keep-alive 长连接与多种触发/并发模式切换，代码结构清晰、模块化，适合学习与二次开发。
+一个基于 Linux epoll 的高并发轻量级 HTTP 服务器（C++11），支持静态资源访问、用户注册/登录、keep-alive 长连接与多种触发/并发模式切换，代码结构清晰、模块化，适合学习与二次开发。
 
 ## 项目简介
 
@@ -33,7 +33,7 @@ MyWebServer/
 ## 环境依赖
 
 - Linux 系统（使用 epoll，不支持 macOS/Windows）
-- `g++` 支持 C++17、`make`
+- `g++` 支持 C++11、`make`
 - 本地 MySQL 服务（端口 3306）
 
 ## 数据库初始化
@@ -41,8 +41,8 @@ MyWebServer/
 服务器启动时连接本地 MySQL,需要准备数据库与用户表：
 
 ```sql
-CREATE DATABASE IF NOT EXISTS mydb DEFAULT CHARSET utf8mb4;
-USE mydb;
+CREATE DATABASE IF NOT EXISTS yourdb DEFAULT CHARSET utf8mb4;
+USE yourdb;
 CREATE TABLE IF NOT EXISTS user (
     username VARCHAR(50) NOT NULL,
     passwd   VARCHAR(50) NOT NULL,
@@ -95,19 +95,18 @@ make server        # 编译服务器
 
 ### 注册演示
 
-![注册演示](docs/benchmark/register.png)
+<!-- 将注册演示视频保存为 docs/demo/register.mp4 -->
+<video src="docs/demo/register.mp4" width="640" controls></video>
 
 ### 登录演示
 
-![登录演示](docs/benchmark/login.png)
+<!-- 将登录演示视频保存为 docs/demo/login.mp4 -->
+<video src="docs/demo/login.mp4" width="640" controls></video>
 
 ### 请求资源演示
 
-![请求资源演示](docs/benchmark/req_source.png)
-
-### 请求视频演示
-
-![请求视频演示](docs/benchmark/video.png)
+<!-- 将资源页请求演示视频保存为 docs/demo/resource.mp4 -->
+<video src="docs/demo/resource.mp4" width="640" controls></video>
 
 ## 八种组合模式压测
 
