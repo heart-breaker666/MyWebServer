@@ -211,28 +211,10 @@ void WebServer::EventLoop() {
 }
 
 void WebServer::DealWithListen() {
-    // LT 一次 accept，ET 循环 accept
-    if (!listen_et_) {
-        struct sockaddr_in client_addr;
-        socklen_t addr_len = sizeof(client_addr);
-        const int connfd =
-            accept(listen_fd_, reinterpret_cast<sockaddr*>(&client_addr),
-                   &addr_len);
-        if (connfd < 0) {
-            LOG_ERROR("WebServer: accept failed: %s", strerror(errno));
-            return;
-        }
-        if (HttpConn::user_count_ >= kMaxFd) {
-            close(connfd);
-            return;
-        }
-        users_[connfd].Init(connfd, client_addr, root_dir_, conn_et_);
-        // 注册超时定时器：无活动连接到期后关闭
-        TimerManager::GetInstance().AddTimer(connfd, kTimerTimeoutSec);
-        LOG_INFO("WebServer: new connection fd=%d, total=%d", connfd,
-                 HttpConn::user_count_.load());
-        return;
-    }
+    // 无论 LT/ET 都循环 accept 直到队列清空（EAGAIN）。
+    // 若 LT 每次只 accept 一个，高并发下 accept 队列长期非空、listenfd 持续就绪，
+    // 事件循环会被反复唤醒去 accept，连接建立吞吐受限，已就绪连接的读事件被
+    // 不断推迟，导致请求尾部延迟暴涨甚至超时。
     while (true) {
         struct sockaddr_in client_addr;
         socklen_t addr_len = sizeof(client_addr);

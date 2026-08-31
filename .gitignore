@@ -1,2 +1,10 @@
 # IDE 配置（含 rules 规则文件夹）
 .trae/
+
+# 构建产物
+server
+*_test
+
+# 日志文件
+*.log
+*ServerLog
