@@ -22,9 +22,9 @@ const int kMaxEvents = 1024;
 constexpr int kTimerTimeoutSec = 15;
 
 // MySQL 连接信息（与本地环境一致）
-const char* kDbUrl = "127.0.0.1";
+const char* kDbUrl = "ip";
 const char* kDbUser = "root";
-const char* kDbPassword = "fxh668";
+const char* kDbPassword = "password";
 const char* kDbName = "yourdb";
 const int kDbPort = 3306;
 

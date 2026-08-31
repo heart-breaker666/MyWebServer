@@ -40,7 +40,7 @@ MyWebServer/
 
 ## 数据库初始化
 
-服务器启动时连接本地 MySQL（连接信息见 `src/WebServer.cpp` 顶部常量，可按需修改），需要准备数据库与用户表：
+服务器启动时连接本地 MySQL,需要准备数据库与用户表：
 
 ```sql
 CREATE DATABASE IF NOT EXISTS yourdb DEFAULT CHARSET utf8mb4;
