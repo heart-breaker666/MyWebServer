@@ -41,8 +41,8 @@ MyWebServer/
 服务器启动时连接本地 MySQL,需要准备数据库与用户表：
 
 ```sql
-CREATE DATABASE IF NOT EXISTS yourdb DEFAULT CHARSET utf8mb4;
-USE yourdb;
+CREATE DATABASE IF NOT EXISTS mydb DEFAULT CHARSET utf8mb4;
+USE mydb;
 CREATE TABLE IF NOT EXISTS user (
     username VARCHAR(50) NOT NULL,
     passwd   VARCHAR(50) NOT NULL,
@@ -95,18 +95,19 @@ make server        # 编译服务器
 
 ### 注册演示
 
-<!-- 将注册演示视频保存为 docs/demo/register.mp4 -->
-<video src="docs/demo/register.mp4" width="640" controls></video>
+![注册演示](docs/benchmark/register.png)
 
 ### 登录演示
 
-<!-- 将登录演示视频保存为 docs/demo/login.mp4 -->
-<video src="docs/demo/login.mp4" width="640" controls></video>
+![登录演示](docs/benchmark/login.png)
 
 ### 请求资源演示
 
-<!-- 将资源页请求演示视频保存为 docs/demo/resource.mp4 -->
-<video src="docs/demo/resource.mp4" width="640" controls></video>
+![请求资源演示](docs/benchmark/req_source.png)
+
+### 请求视频演示
+
+![请求视频演示](docs/benchmark/video.png)
 
 ## 八种组合模式压测
 
