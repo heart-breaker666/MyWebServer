@@ -470,8 +470,8 @@ void HttpConn::ModFd(uint32_t events) {
 }
 
 void HttpConn::EnableWrite() {
-    // 半同步半异步模式：工作线程处理完请求后调用，注册 EPOLLOUT 把连接交还主线程，
-    // 由事件循环的 EPOLLOUT 分支调用 Write() 发送响应（写操作集中在主线程）
+    // 工作线程构造响应后注册 EPOLLOUT；模拟 Proactor 模式由主线程调用 Write()，
+    // 多线程 reactor 模式由事件循环的 EPOLLOUT 分支将写任务分发给工作线程
     ModFd(EPOLLOUT);
 }
 

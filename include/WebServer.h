@@ -1,9 +1,7 @@
 #pragma once
 
 #include <sys/epoll.h>
-
 #include <string>
-
 #include "../include/Config.h"
 #include "../include/ConnectionPool.h"
 #include "../include/HttpConn.h"

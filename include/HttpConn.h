@@ -1,5 +1,4 @@
 #pragma once
-
 #include <atomic>
 #include <cstdint>
 #include <netinet/in.h>
@@ -88,8 +87,8 @@ public:
         return bytes_to_send_ <= 0;
     }
 
-    // 半同步半异步模式：工作线程处理完请求后调用，重新注册 EPOLLOUT，
-    // 响应发送交由主线程事件循环驱动（该模式下写操作集中到主线程）
+    // 工作线程构造响应后调用，重新注册 EPOLLOUT；模拟 Proactor 模式由主线程发送，
+    // 多线程 reactor 模式由事件循环分发给工作线程发送
     void EnableWrite();
 
     // 请求不完整（半包）时调用：重新注册 EPOLLIN，等待客户端继续发送，

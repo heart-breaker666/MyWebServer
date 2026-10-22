@@ -21,8 +21,8 @@ const int kMaxEvents = 1024;
 // 连接超时时间（秒）：客户端连接后无任何活动则被关闭
 constexpr int kTimerTimeoutSec = 15;
 
-// MySQL 连接信息（与本地环境一致）
-const char* kDbUrl = "ip";
+// MySQL 连接信息（默认示例，请按本地环境修改）
+const char* kDbUrl = "localhost";
 const char* kDbUser = "root";
 const char* kDbPassword = "password";
 const char* kDbName = "yourdb";
@@ -244,7 +244,7 @@ void WebServer::DealWithRead(int fd) {
     // 连接有数据活动，顺延超时时间
     TimerManager::GetInstance().AdjustTimer(fd, kTimerTimeoutSec);
     // 提交连接到线程池处理：
-    //   半同步半异步：主线程读取数据，线程池负责处理（构造响应/发送/关闭）
+    //   模拟 Proactor：主线程读取数据，线程池负责请求处理与构造响应
     //   多线程 reactor：直接提交连接，线程池负责读取并处理
     if (!config_.IsReactorModel()) {
         if (users_[fd].Read() && thread_pool_->Append(&users_[fd])) {
@@ -262,7 +262,7 @@ void WebServer::DealWithWrite(int fd) {
     TimerManager::GetInstance().AdjustTimer(fd, kTimerTimeoutSec);
     // 发送缓冲区恢复可写，继续发送未完成的响应：
     //   多线程 reactor：发送任务送回线程池，由工作线程执行写（写操作也在 worker 内完成）
-    //   半同步半异步：主线程直接发送（写操作集中在主线程）
+    //   模拟 Proactor：主线程直接发送（写操作集中在主线程）
     if (config_.IsReactorModel()) {
         // 进入发送阶段（append 前置写入状态），交由线程池续写
         users_[fd].SetWriteState();
@@ -272,7 +272,7 @@ void WebServer::DealWithWrite(int fd) {
         users_[fd].Close();  // 任务队列满：关闭连接
         return;
     }
-    // 半同步半异步：发送失败则关闭连接；发送完成时按 keep-alive 决定复用连接还是关闭；
+    // 模拟 Proactor：发送失败则关闭连接；发送完成时按 keep-alive 决定复用连接还是关闭；
     // 仍未发完：Write() 内部已重新注册 EPOLLOUT，等待下次可写事件。
     if (!users_[fd].Write()) {
         users_[fd].Close();

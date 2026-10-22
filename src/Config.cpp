@@ -1,5 +1,4 @@
 #include "../include/Config.h"
-
 #include <string>
 #include <unistd.h>
 

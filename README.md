@@ -5,11 +5,13 @@
 ## 项目简介
 
 - **事件驱动**：基于 `epoll` 多路复用，监听 fd 与连接 fd 均支持 **LT / ET** 触发模式组合（`-m 0~3`），事件循环以定时器最近到期时间作为 `epoll_wait` 超时，无阻塞轮询。
-- **两种并发模型**：**半同步半异步模式**（主线程负责 I/O、线程池负责处理）与 **多线程 reactor 模式**（读、处理、写均在 worker 内完成），通过 `-a 0/1` 切换。
+- **两种并发模型**：**模拟 Proactor 模式**（主线程负责 I/O、线程池负责请求处理）与 **多线程 reactor 模式**（读、处理、写均在 worker 内完成），通过 `-a 0/1` 切换。
 - **HTTP 协议**：主从状态机手工解析 HTTP/1.1 报文（请求行、请求头、请求体），支持 GET / POST，支持 keep-alive 长连接复用；静态文件通过 `mmap + writev` 分散写零拷贝发送。
 - **业务功能**：注册 / 登录 CGI（基于 MySQL `user` 表校验），登录后跳转资源页浏览图片与视频。
 - **模块化组件**：线程池（FIFO 队列 + 条件变量）、MySQL 连接池（RAII 自动获取归还）、定时器（`std::priority_queue` 小根堆 + 惰性删除 + fd 句柄映射）、同步/异步日志系统。
 - **非活跃连接管理**：连接接入即注册定时器，有数据活动自动顺延，超时自动关闭，防止 fd 泄漏与误关复用连接。
+
+这里的“模拟 Proactor”指主线程通过 `epoll` 监听读写就绪，调用非阻塞 socket 的 `recv/writev` 完成实际读写，再将已读取的数据交给工作线程解析和处理；响应构造完成后交还主线程发送。底层采用同步非阻塞 I/O，通过线程分工模拟 Proactor 的处理方式，而非由内核异步 I/O 完成通知驱动。
 
 ## 功能特性
 
@@ -76,7 +78,7 @@ make server        # 编译服务器
 | `-s` | 整数 | 8 | 数据库连接池数量 |
 | `-t` | 整数 | 8 | 线程池线程数量 |
 | `-c` | 0/1 | 0 | 是否关闭日志：0 否，1 是 |
-| `-a` | 0/1 | 0 | 并发模型：0 半同步半异步，1 多线程 reactor |
+| `-a` | 0/1 | 0 | 并发模型：0 模拟 Proactor，1 多线程 reactor |
 
 ### 4. 触发组合模式（-m）
 
@@ -95,18 +97,21 @@ make server        # 编译服务器
 
 ### 注册演示
 
-<!-- 将注册演示视频保存为 docs/demo/register.mp4 -->
-<video src="docs/demo/register.mp4" width="640" controls></video>
+[查看注册演示视频](root/register.mp4)
+
+<video src="root/register.mp4" width="640" controls></video>
 
 ### 登录演示
 
-<!-- 将登录演示视频保存为 docs/demo/login.mp4 -->
-<video src="docs/demo/login.mp4" width="640" controls></video>
+[查看登录演示视频](root/login.mp4)
+
+<video src="root/login.mp4" width="640" controls></video>
 
 ### 请求资源演示
 
-<!-- 将资源页请求演示视频保存为 docs/demo/resource.mp4 -->
-<video src="docs/demo/resource.mp4" width="640" controls></video>
+[查看请求资源演示视频](root/resource.mp4)
+
+<video src="root/resource.mp4" width="640" controls></video>
 
 ## 八种组合模式压测
 
@@ -116,7 +121,7 @@ make server        # 编译服务器
 wrk -t8 -c1000 -d30s http://127.0.0.1:9006/index.html
 ```
 
-| 触发组合 | 半同步半异步（`-a 0`） | 多线程 reactor（`-a 1`） |
+| 触发组合 | 模拟 Proactor（`-a 0`） | 多线程 reactor（`-a 1`） |
 |----------|------------------------|--------------------------|
 | `-m 0` LT/LT | ![m0a0](docs/benchmark/m0_a0.png) | ![m0a1](docs/benchmark/m0_a1.png) |
 | `-m 1` LT/ET | ![m1a0](docs/benchmark/m1_a0.png) | ![m1a1](docs/benchmark/m1_a1.png) |
